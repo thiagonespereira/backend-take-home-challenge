@@ -1,5 +1,9 @@
 # buildco-sync
 
+**Submission.** Start here: **[ISSUES.md](ISSUES.md)** — ranked written review (the brief). Optional Critical/High implementation and a live Postgres/webhook run: **[FIXES.md](FIXES.md)**. Repo: [github.com/thiagonespereira/backend-take-home-challenge](https://github.com/thiagonespereira/backend-take-home-challenge).
+
+---
+
 Integration service that syncs Projects and Contacts from the BuildCo construction API into the CRM's Postgres database. The service is multi-tenant: each tenant connects their own BuildCo account, so BuildCo external IDs are only meaningful within a tenant.
 
 The service passes all tests and runs in staging.
