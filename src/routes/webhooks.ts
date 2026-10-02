@@ -4,6 +4,7 @@ import { AppDataSource } from '../data-source';
 import { Tenant } from '../entities/Tenant';
 import { logger } from '../logger';
 import { BuildcoEvent, processEvent } from '../services/eventService';
+import { verifyBuildcoSignature } from '../utils/webhookSignature';
 
 const eventSchema = z.object({
   id: z.string().min(1),
@@ -16,9 +17,10 @@ const router = Router();
 
 router.post('/buildco', async (req, res, next) => {
   try {
-    const signature = req.header('x-buildco-signature');
-    if (!signature) {
-      res.status(401).json({ error: 'missing signature header' });
+    const signature = req.header('x-buildco-signature') ?? '';
+    const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody;
+    if (!rawBody || !verifyBuildcoSignature(rawBody, signature)) {
+      res.status(401).json({ error: 'invalid signature' });
       return;
     }
 

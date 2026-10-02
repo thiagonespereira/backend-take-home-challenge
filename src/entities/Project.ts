@@ -6,11 +6,13 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { Tenant } from './Tenant';
 
 @Entity('projects')
+@Unique('uq_projects_tenant_external', ['tenantId', 'externalId'])
 export class Project {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -86,7 +86,10 @@ export class BuildcoClient {
   private readonly baseUrl: string;
 
   constructor(apiKey: string | null | undefined, baseUrl: string = config.buildco.baseUrl) {
-    this.apiKey = apiKey || config.buildco.apiKey;
+    if (!apiKey) {
+      throw new Error('BuildCo API key is required');
+    }
+    this.apiKey = apiKey;
     this.baseUrl = baseUrl;
   }
 

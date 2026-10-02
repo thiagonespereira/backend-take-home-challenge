@@ -62,4 +62,10 @@ describe('BuildcoClient', () => {
       }),
     );
   });
+
+  it('throws when the tenant API key is missing instead of using a global fallback', () => {
+    expect(() => new BuildcoClient('')).toThrow('BuildCo API key is required');
+    expect(() => new BuildcoClient(null)).toThrow('BuildCo API key is required');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

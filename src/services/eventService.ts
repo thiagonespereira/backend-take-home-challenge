@@ -34,89 +34,106 @@ interface ContactPayload {
   project_id?: string;
 }
 
+export function isStale(existing: Date | null | undefined, incoming: Date): boolean {
+  if (!existing) {
+    return false;
+  }
+  return existing.getTime() > incoming.getTime();
+}
+
 export async function processEvent(tenant: Tenant, event: BuildcoEvent): Promise<void> {
   switch (event.type) {
     case 'project.created':
-      await applyProjectCreated(tenant, event);
-      break;
     case 'project.updated':
-      await applyProjectUpdated(tenant, event);
+      await applyProject(tenant, event);
       break;
     case 'contact.created':
-      await applyContactCreated(tenant, event);
-      break;
     case 'contact.updated':
-      await applyContactUpdated(tenant, event);
+      await applyContact(tenant, event, event.id, event.data as ContactPayload);
       break;
   }
 }
 
-async function applyProjectCreated(tenant: Tenant, event: BuildcoEvent): Promise<void> {
+async function applyProject(tenant: Tenant, event: BuildcoEvent): Promise<void> {
   const projectRepo = AppDataSource.getRepository(Project);
-  const contactRepo = AppDataSource.getRepository(Contact);
+  const incoming = new Date(event.occurred_at);
   const data = event.data as ProjectPayload;
 
-  const project = projectRepo.create({
-    tenantId: tenant.id,
-    externalId: event.id,
-    name: data.name ?? '',
-    status: data.projectStatus ?? 'active',
-    siteAddress: data.site_address ?? null,
-    budgetCents: data.budget_cents != null ? String(data.budget_cents) : null,
-    sourceUpdatedAt: new Date(event.occurred_at),
+  let project = await projectRepo.findOne({
+    where: { tenantId: tenant.id, externalId: event.id },
   });
-  const saved = await projectRepo.save(project);
 
-  const embedded = data.contacts ?? [];
-  for (const payload of embedded) {
-    const contact = contactRepo.create({
-      tenantId: tenant.id,
-      projectId: saved.id,
-      externalId: payload.id ?? '',
-      fullName: payload.fullName ?? '',
-      email: payload.email ?? null,
-      phone: payload.phone ?? null,
-      role: payload.role ?? null,
-      sourceUpdatedAt: new Date(event.occurred_at),
-    });
-    await contactRepo.save(contact);
-  }
-}
-
-async function applyProjectUpdated(tenant: Tenant, event: BuildcoEvent): Promise<void> {
-  const projectRepo = AppDataSource.getRepository(Project);
-  const project = await projectRepo.findOne({ where: { externalId: event.id } });
-  if (!project) {
-    logger.warn(
-      { tenantId: tenant.id, externalId: event.id },
-      'project.updated received for unknown project, skipping',
+  if (project && isStale(project.sourceUpdatedAt, incoming)) {
+    logger.info(
+      { tenantId: tenant.id, externalId: event.id, occurredAt: event.occurred_at },
+      'skipping stale project event',
     );
     return;
   }
 
-  const data = event.data as ProjectPayload;
-  if (data.name !== undefined) {
-    project.name = data.name;
+  if (!project) {
+    project = projectRepo.create({
+      tenantId: tenant.id,
+      externalId: event.id,
+      name: data.name ?? '',
+      status: data.projectStatus ?? 'active',
+      siteAddress: data.site_address ?? null,
+      budgetCents: data.budget_cents != null ? String(data.budget_cents) : null,
+    });
+  } else {
+    if (data.name !== undefined) {
+      project.name = data.name;
+    }
+    if (data.projectStatus !== undefined) {
+      project.status = data.projectStatus;
+    }
+    if (data.site_address !== undefined) {
+      project.siteAddress = data.site_address;
+    }
+    if (data.budget_cents !== undefined) {
+      project.budgetCents = data.budget_cents != null ? String(data.budget_cents) : null;
+    }
   }
-  if (data.projectStatus !== undefined) {
-    project.status = data.projectStatus;
+
+  project.sourceUpdatedAt = incoming;
+  const saved = await projectRepo.save(project);
+
+  if (event.type !== 'project.created') {
+    return;
   }
-  if (data.site_address !== undefined) {
-    project.siteAddress = data.site_address;
+
+  for (const payload of data.contacts ?? []) {
+    if (!payload.id) {
+      continue;
+    }
+    await applyContact(tenant, event, payload.id, payload, saved.id);
   }
-  if (data.budget_cents !== undefined) {
-    project.budgetCents = data.budget_cents != null ? String(data.budget_cents) : null;
-  }
-  project.sourceUpdatedAt = new Date(event.occurred_at);
-  await projectRepo.save(project);
 }
 
-async function applyContactCreated(tenant: Tenant, event: BuildcoEvent): Promise<void> {
+async function applyContact(
+  tenant: Tenant,
+  event: BuildcoEvent,
+  externalId: string,
+  data: ContactPayload,
+  embeddedProjectId?: string,
+): Promise<void> {
   const contactRepo = AppDataSource.getRepository(Contact);
-  const data = event.data as ContactPayload;
+  const incoming = new Date(event.occurred_at);
 
-  let projectId: string | null = null;
-  if (data.project_id) {
+  let contact = await contactRepo.findOne({
+    where: { tenantId: tenant.id, externalId },
+  });
+
+  if (contact && isStale(contact.sourceUpdatedAt, incoming)) {
+    logger.info(
+      { tenantId: tenant.id, externalId, occurredAt: event.occurred_at },
+      'skipping stale contact event',
+    );
+    return;
+  }
+
+  let projectId = embeddedProjectId ?? contact?.projectId ?? null;
+  if (embeddedProjectId === undefined && data.project_id) {
     const projectRepo = AppDataSource.getRepository(Project);
     const project = await projectRepo.findOne({
       where: { tenantId: tenant.id, externalId: data.project_id },
@@ -124,43 +141,34 @@ async function applyContactCreated(tenant: Tenant, event: BuildcoEvent): Promise
     projectId = project ? project.id : null;
   }
 
-  const contact = contactRepo.create({
-    tenantId: tenant.id,
-    projectId,
-    externalId: event.id,
-    fullName: data.fullName ?? '',
-    email: data.email ?? null,
-    phone: data.phone ?? null,
-    role: data.role ?? null,
-    sourceUpdatedAt: new Date(event.occurred_at),
-  });
-  await contactRepo.save(contact);
-}
-
-async function applyContactUpdated(tenant: Tenant, event: BuildcoEvent): Promise<void> {
-  const contactRepo = AppDataSource.getRepository(Contact);
-  const contact = await contactRepo.findOne({ where: { externalId: event.id } });
   if (!contact) {
-    logger.warn(
-      { tenantId: tenant.id, externalId: event.id },
-      'contact.updated received for unknown contact, skipping',
-    );
-    return;
+    contact = contactRepo.create({
+      tenantId: tenant.id,
+      projectId,
+      externalId,
+      fullName: data.fullName ?? '',
+      email: data.email ?? null,
+      phone: data.phone ?? null,
+      role: data.role ?? null,
+    });
+  } else {
+    if (data.fullName !== undefined) {
+      contact.fullName = data.fullName;
+    }
+    if (data.email !== undefined) {
+      contact.email = data.email;
+    }
+    if (data.phone !== undefined) {
+      contact.phone = data.phone;
+    }
+    if (data.role !== undefined) {
+      contact.role = data.role;
+    }
+    if (embeddedProjectId !== undefined || data.project_id) {
+      contact.projectId = projectId;
+    }
   }
 
-  const data = event.data as ContactPayload;
-  if (data.fullName !== undefined) {
-    contact.fullName = data.fullName;
-  }
-  if (data.email !== undefined) {
-    contact.email = data.email;
-  }
-  if (data.phone !== undefined) {
-    contact.phone = data.phone;
-  }
-  if (data.role !== undefined) {
-    contact.role = data.role;
-  }
-  contact.sourceUpdatedAt = new Date(event.occurred_at);
+  contact.sourceUpdatedAt = incoming;
   await contactRepo.save(contact);
 }

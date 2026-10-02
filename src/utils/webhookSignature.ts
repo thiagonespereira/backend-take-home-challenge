@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { config } from '../config';
 
+function isHex(value: string): boolean {
+  return value.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(value);
+}
+
 export function verifyBuildcoSignature(
   rawBody: Buffer,
   signatureHeader: string,
@@ -13,9 +17,15 @@ export function verifyBuildcoSignature(
   const expectedHex = signatureHeader.slice('sha256='.length);
   const computed = createHmac('sha256', secret).update(rawBody).digest('hex');
 
-  if (expectedHex.length !== computed.length) {
+  if (!isHex(expectedHex) || expectedHex.length !== computed.length) {
     return false;
   }
 
-  return timingSafeEqual(Buffer.from(expectedHex, 'hex'), Buffer.from(computed, 'hex'));
+  const expectedBuf = Buffer.from(expectedHex, 'hex');
+  const computedBuf = Buffer.from(computed, 'hex');
+  if (expectedBuf.length !== computedBuf.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuf, computedBuf);
 }
